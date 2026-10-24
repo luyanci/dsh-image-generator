@@ -15,7 +15,12 @@ DeepSeek Harness 生图插件：在设置里配置多个生图供应商 / 模型
   - `multipart`：只走标准表单上传（官方 OpenAI、按规范实现的网关）；
   - `json`：只走 0.2.0 之前的 JSON 传法（老网关已经在用就别动）；
   - `chat`：把参考图塞进 `/chat/completions`（只开放 chat 端点的网关）；
+  - `generations`：把参考图作为 `image_url` 发到 `/images/generations`（ModelScope 这类任务网关根本没有 `/images/edits`）；
   - `off`：关掉改图，只保留纯生图。
+- **生成模式可配**（0.3.0 起，来自上游 PR #1）：设置 → 插件 → 图形生成 → **生成模式**。任务制（异步）网关提交后只返回 `task_id`，图要另外轮询 `GET /v1/tasks/{id}` 才有——ModelScope API-Inference 就是这样，带不带异步标识都只返 `task_id`。
+  - `auto`（默认）：先按普通请求发送，网关返回任务就自动转轮询；
+  - `sync`：只发一次，遇到任务直接报错提示切模式，不静默轮询；
+  - `async`：提交时就要任务（ModelScope 走 `X-ModelScope-Async-Mode` 头，其他网关走 `async: true` 体），然后轮询到出图。
 - **中英双语界面**，无构建步骤，要求 Node >= 22.19。
 
 ## API 格式
@@ -93,12 +98,21 @@ dsh --profile <name> --dump-config | grep image-gen
 | `providerId` / `modelId` | 空 | 当前选中的生图供应商与模型 |
 | `defaultSize` | `1024x1024` | 工具未显式传 `size` 时的默认尺寸 |
 | `defaultQuality` | `auto` | 工具未显式传 `quality` 时的默认质量 |
-| `editFormat` | `auto` | 改图的传输方式：`auto` / `multipart` / `json` / `chat` / `off` |
+| `editFormat` | `auto` | 改图的传输方式：`auto` / `multipart` / `json` / `chat` / `generations` / `off` |
+| `asyncMode` | `auto` | 任务制网关的处理方式：`auto` / `sync` / `async` |
 | `apiFormat`（供应商级） | `openai-images` | 新建供应商时的默认 API 格式 |
 
 ## 来源
 
-本仓库是 [whiteS18/dsh-image-generation](https://github.com/whiteS18/dsh-image-generation) 的 fork（起点 `0.1.3`），改动集中在一件自有需求上：**让改图能按网关的实际要求发送**。原版对 OpenAI / xAI 格式一律只发 JSON 体（`images: [{ image_url }]`），而按 OpenAI 规范实现 `/images/edits` 的网关只吃 `multipart/form-data`，于是改图恒定失败、生图却正常。0.2.0 加了 `editFormat` 配置项并实现了标准表单上传，`auto` 保留旧路径作为回退。
+本仓库是 [whiteS18/dsh-image-generation](https://github.com/whiteS18/dsh-image-generation) 的 fork（起点 `0.1.3`）。
+
+**0.2.0**：自有需求——**让改图能按网关的实际要求发送**。原版对 OpenAI / xAI 格式一律只发 JSON 体（`images: [{ image_url }]`），而按 OpenAI 规范实现 `/images/edits` 的网关只吃 `multipart/form-data`，于是改图恒定失败、生图却正常。加了 `editFormat` 配置项并实现标准表单上传，`auto` 保留旧路径作为回退。
+
+**0.3.0**：合并上游 PR [#1](https://github.com/whiteS18/dsh-image-generation/pull/1)（作者 [TYZ-Pixel](https://github.com/TYZ-Pixel)）的任务制网关联支持。合入时的调整：
+- `asyncMode` 从供应商级改为运行级（和 `editFormat` 一起放在「图形生成」卡片里），配置页能直接改；
+- 原先按 ModelScope 域名硬编码的参考图分支，改成 `editFormat: generations` 这一档，不再按网关名字判断；
+- 补上 PR 自己列出的缺口：`202` 但没有 `task_id` 时给明确报错、轮询响应同时带状态和图片时以图片为准、`SUCCEED` 但没图时指出任务号、轮询间隔/超时可用 `IMAGE_GEN_ASYNC_POLL_INTERVAL_MS` / `IMAGE_GEN_ASYNC_POLL_TIMEOUT_MS` 覆盖（测试就是靠它免等真实秒数）；
+- 补了 `test/async-mode.test.js`（上游 PR 没带测试）。
 
 ## 与现有插件的关系
 

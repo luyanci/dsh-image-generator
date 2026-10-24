@@ -104,7 +104,14 @@ window.__ModuleLoader__.load({
       defaultSize: 'Default size',
       defaultQuality: 'Default quality',
       editFormat: 'Edit method',
-      editFormatHint: 'How reference images reach the provider. auto tries a multipart upload first, then the legacy JSON body. off refuses edits but keeps generation working.',
+      editFormatHint: 'How reference images reach the provider. auto tries a multipart upload first, then the legacy JSON body; generations sends them to /images/generations as image_url (task gateways such as ModelScope); off refuses edits but keeps generation working.',
+      asyncMode: 'Generation mode',
+      asyncModeAuto: 'Auto (detect)',
+      asyncModeSync: 'Sync (single response)',
+      asyncModeAsync: 'Async (task polling)',
+      asyncModeHintAuto: 'Sends a normal request first; switches to task polling when the gateway answers with a task ID.',
+      asyncModeHintSync: 'Always one request that returns the image directly.',
+      asyncModeHintAsync: 'Always submits a task and polls until it finishes.',
     }
 
     const zh = {
@@ -162,7 +169,14 @@ window.__ModuleLoader__.load({
       defaultSize: '默认尺寸',
       defaultQuality: '默认质量',
       editFormat: '改图方式',
-      editFormatHint: '参考图怎么交给供应商。auto 先用标准 multipart 上传，失败再退回旧的 JSON 传法；off 关掉改图，只保留生图。',
+      editFormatHint: '参考图怎么交给供应商。auto 先用标准 multipart 上传，失败再退回旧的 JSON 传法；generations 把参考图发到 /images/generations 的 image_url（ModelScope 这类任务网关没有 /images/edits）；off 关掉改图，只保留生图。',
+      asyncMode: '生成模式',
+      asyncModeAuto: '自动（推荐）',
+      asyncModeSync: '同步（一次返回）',
+      asyncModeAsync: '异步（任务轮询）',
+      asyncModeHintAuto: '先按普通请求发送；若网关返回任务 ID，则自动转为轮询获取结果。',
+      asyncModeHintSync: '始终单次请求直接返回图片。',
+      asyncModeHintAsync: '始终提交任务并轮询，直到生成完成。',
     }
 
     function translateFactory(dict) {
@@ -204,6 +218,7 @@ window.__ModuleLoader__.load({
         baseUrl: String(row.baseUrl ?? ''),
         apiFormat: String(row.apiFormat ?? 'openai-images'),
         apiKeyEnv: String(row.apiKeyEnv ?? ''),
+        asyncMode: String(row.asyncMode ?? 'auto'),
         models: Array.isArray(row.models)
           ? row.models.map((model) => ({ id: String(model.id ?? ''), name: String(model.name ?? '') }))
           : [],
@@ -534,6 +549,7 @@ window.__ModuleLoader__.load({
           baseUrl: String(next.baseUrl).trim(),
           apiFormat: next.apiFormat || 'openai-images',
           apiKeyEnv,
+          asyncMode: next.asyncMode || 'auto',
           models,
         }
         const list = creating
@@ -655,6 +671,7 @@ window.__ModuleLoader__.load({
       const [size, setSize] = React.useState('1024x1024')
       const [quality, setQuality] = React.useState('auto')
       const [editFormat, setEditFormat] = React.useState('auto')
+      const [mode, setMode] = React.useState('auto')
       const [busy, setBusy] = React.useState(false)
       const [failed, setFailed] = React.useState(false)
       const [dirty, setDirty] = React.useState(false)
@@ -678,6 +695,7 @@ window.__ModuleLoader__.load({
         setSize(value.defaultSize || '1024x1024')
         setQuality(value.defaultQuality || 'auto')
         setEditFormat(value.editFormat || 'auto')
+        setMode(value.asyncMode || 'auto')
       }, [runtimeSnap.revision, dirty])
 
       if (runtimeSnap.status !== 'ready') return null
@@ -695,6 +713,7 @@ window.__ModuleLoader__.load({
             { op: 'set', path: ['defaultSize'], value: size },
             { op: 'set', path: ['defaultQuality'], value: quality },
             { op: 'set', path: ['editFormat'], value: editFormat },
+            { op: 'set', path: ['asyncMode'], value: mode },
           ])
           const landed = runtime.getSnapshot().value
           if (landed?.enabled !== enabled || (landed?.providerId || '') !== (providerId || '') || (landed?.modelId || '') !== (modelId || '')) {
@@ -719,6 +738,7 @@ window.__ModuleLoader__.load({
         setSize(value.defaultSize || '1024x1024')
         setQuality(value.defaultQuality || 'auto')
         setEditFormat(value.editFormat || 'auto')
+        setMode(value.asyncMode || 'auto')
       }
 
       return React.createElement('li', { style: css.pluginCard },
@@ -784,10 +804,27 @@ window.__ModuleLoader__.load({
             label: t('editFormat'),
             value: editFormat,
             disabled: !writable || busy,
-            options: ['auto', 'multipart', 'json', 'chat', 'off'].map((value) => ({ id: value, label: value })),
+            options: ['auto', 'multipart', 'json', 'chat', 'generations', 'off'].map((value) => ({ id: value, label: value })),
             onPick: (id) => { setEditFormat(id); setDirty(true) },
           }),
           React.createElement('p', { style: css.meta }, t('editFormatHint')),
+          React.createElement(PrefRow, {
+            label: t('asyncMode'),
+            value: mode,
+            disabled: !writable || busy,
+            options: [
+              { id: 'auto', label: t('asyncModeAuto') },
+              { id: 'sync', label: t('asyncModeSync') },
+              { id: 'async', label: t('asyncModeAsync') },
+            ],
+            onPick: (id) => { setMode(id); setDirty(true) },
+          }),
+          React.createElement('p', { style: css.meta },
+            mode === 'sync'
+              ? t('asyncModeHintSync')
+              : mode === 'async'
+                ? t('asyncModeHintAsync')
+                : t('asyncModeHintAuto')),
           failed ? React.createElement('p', { style: css.error }, t('saveFailed')) : null,
           React.createElement('div', { style: { ...css.actions, padding: '12px 0 4px' } },
             React.createElement('button', { type: 'button', style: css.button, disabled: !dirty || busy, onClick: discard }, t('discard')),
@@ -1034,6 +1071,7 @@ window.__ModuleLoader__.load({
             defaultSize: value?.defaultSize ?? '1024x1024',
             defaultQuality: value?.defaultQuality ?? 'auto',
             editFormat: value?.editFormat ?? 'auto',
+            asyncMode: value?.asyncMode ?? 'auto',
           })),
         }
       }
