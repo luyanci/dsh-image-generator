@@ -1,8 +1,8 @@
 # Bundle self-activation patch: when this package is installed into a profile
-# via `dsh plugin --profile <name> add dsh-image-generation`, this patch mounts the
+# via `dsh plugin --profile <name> add dsh-image-generator`, this patch mounts the
 # plugin's node half. The client half (Settings > 生图配置, Plugins card, and
 # the image_generate toolview) is discovered from the `dsh.client` declaration
 # in package.json.
 - insert:
     - id: image-gen
-      name: dsh-image-generation
+      name: dsh-image-generator

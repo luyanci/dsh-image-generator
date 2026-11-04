@@ -1,6 +1,6 @@
 {
-  "name": "dsh-image-generation",
-  "version": "0.1.3",
+  "name": "dsh-image-generator",
+  "version": "0.2.0",
   "description": "DSH 生图插件：在设置中配置多个生图供应商/模型，并在对话中通过 image_generate 调用当前选中的模型。",
   "keywords": [
     "deepseek",
@@ -48,10 +48,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/whiteS18/dsh-image-generation.git"
+    "url": "git+https://github.com/luyanci/dsh-image-generator.git"
   },
-  "bugs": "https://github.com/whiteS18/dsh-image-generation/issues",
-  "homepage": "https://github.com/whiteS18/dsh-image-generation#readme",
+  "bugs": "https://github.com/luyanci/dsh-image-generator/issues",
+  "homepage": "https://github.com/luyanci/dsh-image-generator#readme",
   "publishConfig": {
     "registry": "https://registry.npmjs.org"
   },

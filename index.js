@@ -1,5 +1,5 @@
 /**
- * dsh-image-generation — Host half.
+ * dsh-image-generator — Host half.
  *
  * Two settings namespaces:
  *   - `image-gen`          catalog of image providers + models (Settings → 生图配置)
@@ -14,7 +14,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 
-export const name = 'dsh-image-generation'
+export const name = 'dsh-image-generator'
 
 export const inject = ['tools']
 
@@ -29,8 +29,19 @@ export const API_FORMATS = Object.freeze([
   'openai-chat-image',
 ])
 
+/**
+ * How reference images are transported when the caller asks for an edit.
+ *   auto      multipart first, then the historical JSON data-url shape
+ *   multipart standards-compliant OpenAI `/images/edits` form upload
+ *   json      JSON body carrying data urls (behaviour before 0.2.0)
+ *   chat      hand the references to `/chat/completions` instead
+ *   off       refuse edits; plain generation keeps working
+ */
+export const EDIT_FORMATS = Object.freeze(['auto', 'multipart', 'json', 'chat', 'off'])
+const DEFAULT_EDIT_FORMAT = 'auto'
+
 const IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
-const USER_AGENT = 'dsh-image-generation/0.1.1'
+const USER_AGENT = 'dsh-image-generator/0.1.1'
 const DEFAULT_SIZE = '1024x1024'
 const DEFAULT_QUALITY = 'auto'
 
@@ -72,6 +83,7 @@ export const RuntimeConfig = z.object({
   modelId: z.string().default(''),
   defaultSize: z.string().default(DEFAULT_SIZE),
   defaultQuality: z.string().default(DEFAULT_QUALITY),
+  editFormat: z.string().default(DEFAULT_EDIT_FORMAT),
 })
 
 /**
@@ -95,6 +107,7 @@ export const Config = z.object({
   modelId: maybeVolatile(z.string().default('')),
   defaultSize: maybeVolatile(z.string().default(DEFAULT_SIZE)),
   defaultQuality: maybeVolatile(z.string().default(DEFAULT_QUALITY)),
+  editFormat: maybeVolatile(z.string().default(DEFAULT_EDIT_FORMAT)),
 })
 
 /**
@@ -119,6 +132,7 @@ function emptyRuntime() {
     modelId: '',
     defaultSize: DEFAULT_SIZE,
     defaultQuality: DEFAULT_QUALITY,
+    editFormat: DEFAULT_EDIT_FORMAT,
   }
 }
 
@@ -355,6 +369,162 @@ function qualityOf(args, runtime) {
   return args.quality ?? runtime.defaultQuality ?? DEFAULT_QUALITY
 }
 
+function editFormatOf(runtime) {
+  const value = String(runtime?.editFormat ?? '').trim().toLowerCase()
+  return EDIT_FORMATS.includes(value) ? value : DEFAULT_EDIT_FORMAT
+}
+
+function editDisabledError() {
+  return new Error('image_generate: 改图已关闭（设置 → 插件 → 插件配置 → 图形生成 → 改图方式）；'
+    + '去掉 referenceImages 只生图，或把改图方式改成 auto / multipart / json / chat')
+}
+
+function referenceFiles(references) {
+  return references.map((dataUrl, index) => {
+    const decoded = decodeDataUrl(dataUrl)
+    if (decoded === null) throw new Error('image_generate: reference image could not be decoded')
+    const ext = MEDIA_TYPE_EXTENSIONS[decoded.mime] ?? 'png'
+    return { data: decoded.data, mediaType: decoded.mime, name: `reference-${index + 1}.${ext}` }
+  })
+}
+
+/**
+ * Standards-compliant OpenAI edit upload: multipart/form-data with the reference
+ * images as file parts. Relays that implement `/images/edits` per spec reject the
+ * JSON body this plugin used before 0.2.0.
+ */
+async function postMultipart(url, { apiKey, fields, files, signal }) {
+  const form = new FormData()
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || value === null) continue
+    form.set(key, String(value))
+  }
+  const field = files.length > 1 ? 'image[]' : 'image'
+  for (const file of files) {
+    form.append(field, new Blob([file.data], { type: file.mediaType }), file.name)
+  }
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      redirect: 'error',
+      headers: { accept: 'application/json', 'user-agent': USER_AGENT, authorization: `Bearer ${apiKey}` },
+      body: form,
+      ...signal !== undefined ? { signal } : {},
+    })
+  } catch (error) {
+    if (signal?.aborted === true || isAbortError(error)) throw abortedError(signal, error)
+    throw new Error(`image generation request failed: ${String(error)}`)
+  }
+  const payload = await readJson(response, signal)
+  if (!response.ok) throw new Error(errorOf(payload, response.status))
+  return payload
+}
+
+/** One `multipart` attempt against `/images/edits`. */
+async function editMultipart({ provider, model, args, runtime, apiKey, signal, references }) {
+  const size = sizeOf(args, runtime)
+  const quality = qualityOf(args, runtime)
+  const url = joinEndpoint(provider.baseUrl, '/images/edits')
+  const fields = {
+    model,
+    prompt: args.prompt.trim(),
+    n: 1,
+    response_format: 'b64_json',
+    ...size === 'auto' ? {} : { size },
+    ...quality === 'auto' ? {} : { quality },
+  }
+  const files = referenceFiles(references)
+  try {
+    return await postMultipart(url, { apiKey, fields, files, signal })
+  } catch (error) {
+    if (!/response_format/i.test(String(error?.message ?? error))) throw error
+    const { response_format: _omit, ...rest } = fields
+    return await postMultipart(url, { apiKey, fields: rest, files, signal })
+  }
+}
+
+/** One `json` attempt: the body this plugin sent before 0.2.0, kept verbatim. */
+async function editJson({ provider, model, args, runtime, apiKey, signal, references }) {
+  const flavor = provider.apiFormat === 'xai-images' ? 'xai' : 'openai'
+  const size = sizeOf(args, runtime)
+  const quality = qualityOf(args, runtime)
+  const url = joinEndpoint(provider.baseUrl, '/images/edits')
+  const body = flavor === 'xai'
+    ? {
+      model,
+      prompt: args.prompt.trim(),
+      response_format: 'b64_json',
+      ...size === 'auto' ? {} : { aspect_ratio: SIZE_TO_ASPECT[size] ?? '1:1' },
+      ...quality === 'auto' ? {} : { quality: GROK_QUALITY[quality] },
+      ...references.length === 1
+        ? { image: { type: 'image_url', url: references[0] } }
+        : { images: references.map((image_url) => ({ type: 'image_url', url: image_url })) },
+    }
+    : {
+      model,
+      prompt: args.prompt.trim(),
+      n: 1,
+      ...size === 'auto' ? {} : { size },
+      ...quality === 'auto' ? {} : { quality },
+      response_format: 'b64_json',
+      images: references.map((image_url) => ({ image_url })),
+    }
+  let payload
+  try {
+    payload = await postJson(url, { apiKey, body, signal })
+  } catch (error) {
+    if (!/response_format/i.test(String(error?.message ?? error))) throw error
+    const { response_format: _omit, ...rest } = body
+    payload = await postJson(url, { apiKey, body: rest, signal })
+  }
+  return payload
+}
+
+/** One `chat` attempt: the references travel as chat image parts. */
+async function editChat({ provider, model, args, apiKey, signal, references }) {
+  const url = joinEndpoint(provider.baseUrl, '/chat/completions')
+  const content = [{ type: 'text', text: args.prompt.trim() }]
+  for (const image_url of references) content.push({ type: 'image_url', image_url: { url: image_url } })
+  return postJson(url, {
+    apiKey,
+    signal,
+    body: { model, messages: [{ role: 'user', content }], max_tokens: 4096 },
+  })
+}
+
+const EDIT_ATTEMPTS = {
+  multipart: editMultipart,
+  json: editJson,
+  chat: editChat,
+}
+
+/**
+ * Run the configured edit transport. `auto` tries the standards-compliant
+ * multipart upload first and only then the historical JSON body, so relays that
+ * already accepted the old shape keep working while spec-compliant ones start
+ * accepting edits at all.
+ */
+async function generateEdit(options) {
+  const format = editFormatOf(options.runtime)
+  if (format === 'off') throw editDisabledError()
+  const attempts = format === 'auto' ? ['multipart', 'json'] : [format]
+  const failures = []
+  for (const strategy of attempts) {
+    try {
+      const payload = await EDIT_ATTEMPTS[strategy](options)
+      const raw = []
+      collectOpenAiImages(payload, raw)
+      collectChatImages(payload, raw)
+      return await materializeImages(raw, options.signal)
+    } catch (error) {
+      if (options.signal?.aborted === true || isAbortError(error)) throw error
+      failures.push(`${strategy}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  throw new Error(`image_generate: 改图失败（改图方式 ${format}）— ${failures.join('; ')}`)
+}
+
 function geminiAspect(size) {
   const aspect = SIZE_TO_ASPECT[size] ?? '1:1'
   return aspect === 'auto' ? '1:1' : aspect
@@ -371,10 +541,12 @@ function geminiUrl(baseUrl, model, verb) {
 }
 
 async function generateOpenAiImages({ provider, model, args, runtime, apiKey, signal, references }) {
+  if (references !== undefined) {
+    return generateEdit({ provider, model, args, runtime, apiKey, signal, references })
+  }
   const size = sizeOf(args, runtime)
   const quality = qualityOf(args, runtime)
-  const editing = references !== undefined
-  const url = joinEndpoint(provider.baseUrl, editing ? '/images/edits' : '/images/generations')
+  const url = joinEndpoint(provider.baseUrl, '/images/generations')
   const body = {
     model,
     prompt: args.prompt.trim(),
@@ -382,7 +554,6 @@ async function generateOpenAiImages({ provider, model, args, runtime, apiKey, si
     ...size === 'auto' ? {} : { size },
     ...quality === 'auto' ? {} : { quality },
     response_format: 'b64_json',
-    ...editing ? { images: references.map((image_url) => ({ image_url })) } : {},
   }
   let payload
   try {
@@ -398,21 +569,18 @@ async function generateOpenAiImages({ provider, model, args, runtime, apiKey, si
 }
 
 async function generateXaiImages({ provider, model, args, runtime, apiKey, signal, references }) {
+  if (references !== undefined) {
+    return generateEdit({ provider, model, args, runtime, apiKey, signal, references })
+  }
   const size = sizeOf(args, runtime)
   const quality = GROK_QUALITY[qualityOf(args, runtime)]
-  const editing = references !== undefined
-  const url = joinEndpoint(provider.baseUrl, editing ? '/images/edits' : '/images/generations')
+  const url = joinEndpoint(provider.baseUrl, '/images/generations')
   const body = {
     model,
     prompt: args.prompt.trim(),
     response_format: 'b64_json',
     ...size === undefined ? {} : { aspect_ratio: SIZE_TO_ASPECT[size] ?? '1:1' },
     ...quality === undefined ? {} : { quality },
-    ...editing
-      ? references.length === 1
-        ? { image: { type: 'image_url', url: references[0] } }
-        : { images: references.map((url) => ({ type: 'image_url', url })) }
-      : {},
   }
   const payload = await postJson(url, { apiKey, body, signal })
   const raw = []
@@ -717,7 +885,7 @@ function createImageGenerateTool(ctx, currentCatalog, currentRuntime) {
               ...ref.name === undefined ? {} : { name: ref.name },
             })
           } catch (error) {
-            ctx.logger?.warn?.(`dsh-image-generation: could not attach ${paths[index]}: ${error instanceof Error ? error.message : String(error)}`)
+            ctx.logger?.warn?.(`dsh-image-generator: could not attach ${paths[index]}: ${error instanceof Error ? error.message : String(error)}`)
           }
         }
       }
@@ -786,7 +954,7 @@ function registerRpc(ctx) {
       } catch (error) {
         return failure(error)
       }
-    }, { authority: 'loopback' }), 'dsh-image-generation: /image-gen rpc channel')
+    }, { authority: 'loopback' }), 'dsh-image-generator: /image-gen rpc channel')
   })
 }
 
@@ -805,6 +973,7 @@ export function apply(ctx, config) {
     modelId: read('modelId', ''),
     defaultSize: read('defaultSize', DEFAULT_SIZE),
     defaultQuality: read('defaultQuality', DEFAULT_QUALITY),
+    editFormat: read('editFormat', DEFAULT_EDIT_FORMAT),
   })
 
   // DSH <= 0.1.5: the settings service installs schema-driven sections and
@@ -843,4 +1012,8 @@ export function apply(ctx, config) {
 export {
   emptyCatalog,
   emptyRuntime,
+  // Exported for the edit-transport tests: they stub global fetch and drive the
+  // same code path the tool uses, instead of re-implementing request building.
+  editFormatOf,
+  generateEdit,
 }

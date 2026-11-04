@@ -1,12 +1,12 @@
 /**
- * dsh-image-generation — Client half.
+ * dsh-image-generator — Client half.
  *
  * - Settings → 生图配置: add/edit image providers and their models
  * - Settings → 插件 → 插件配置 → 图形生成: pick the single model the tool uses
  * - tool.call.toolview for image_generate: inline gallery
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-image-generation',
+  id: 'dsh-image-generator',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
@@ -29,10 +29,10 @@ window.__ModuleLoader__.load({
 
     function ensureSelectCss() {
       if (typeof document === 'undefined') return
-      if (document.querySelector('style[data-plugin-css="dsh-image-generation-select"]')) return
+      if (document.querySelector('style[data-plugin-css="dsh-image-generator-select"]')) return
       const tag = document.createElement('style')
-      tag.dataset.plugin = 'dsh-image-generation'
-      tag.dataset.pluginCss = 'dsh-image-generation-select'
+      tag.dataset.plugin = 'dsh-image-generator'
+      tag.dataset.pluginCss = 'dsh-image-generator-select'
       tag.textContent = SELECT_CSS
       document.head.appendChild(tag)
     }
@@ -103,6 +103,8 @@ window.__ModuleLoader__.load({
       imageClose: 'Close',
       defaultSize: 'Default size',
       defaultQuality: 'Default quality',
+      editFormat: 'Edit method',
+      editFormatHint: 'How reference images reach the provider. auto tries a multipart upload first, then the legacy JSON body. off refuses edits but keeps generation working.',
     }
 
     const zh = {
@@ -159,6 +161,8 @@ window.__ModuleLoader__.load({
       imageClose: '关闭',
       defaultSize: '默认尺寸',
       defaultQuality: '默认质量',
+      editFormat: '改图方式',
+      editFormatHint: '参考图怎么交给供应商。auto 先用标准 multipart 上传，失败再退回旧的 JSON 传法；off 关掉改图，只保留生图。',
     }
 
     function translateFactory(dict) {
@@ -650,6 +654,7 @@ window.__ModuleLoader__.load({
       const [choice, setChoice] = React.useState('')
       const [size, setSize] = React.useState('1024x1024')
       const [quality, setQuality] = React.useState('auto')
+      const [editFormat, setEditFormat] = React.useState('auto')
       const [busy, setBusy] = React.useState(false)
       const [failed, setFailed] = React.useState(false)
       const [dirty, setDirty] = React.useState(false)
@@ -672,6 +677,7 @@ window.__ModuleLoader__.load({
         setChoice(value.providerId && value.modelId ? `${value.providerId}::${value.modelId}` : '')
         setSize(value.defaultSize || '1024x1024')
         setQuality(value.defaultQuality || 'auto')
+        setEditFormat(value.editFormat || 'auto')
       }, [runtimeSnap.revision, dirty])
 
       if (runtimeSnap.status !== 'ready') return null
@@ -688,6 +694,7 @@ window.__ModuleLoader__.load({
             { op: 'set', path: ['modelId'], value: modelId || '' },
             { op: 'set', path: ['defaultSize'], value: size },
             { op: 'set', path: ['defaultQuality'], value: quality },
+            { op: 'set', path: ['editFormat'], value: editFormat },
           ])
           const landed = runtime.getSnapshot().value
           if (landed?.enabled !== enabled || (landed?.providerId || '') !== (providerId || '') || (landed?.modelId || '') !== (modelId || '')) {
@@ -711,6 +718,7 @@ window.__ModuleLoader__.load({
         setChoice(value.providerId && value.modelId ? `${value.providerId}::${value.modelId}` : '')
         setSize(value.defaultSize || '1024x1024')
         setQuality(value.defaultQuality || 'auto')
+        setEditFormat(value.editFormat || 'auto')
       }
 
       return React.createElement('li', { style: css.pluginCard },
@@ -772,6 +780,14 @@ window.__ModuleLoader__.load({
             options: ['low', 'medium', 'high', 'auto'].map((value) => ({ id: value, label: value })),
             onPick: (id) => { setQuality(id); setDirty(true) },
           }),
+          React.createElement(PrefRow, {
+            label: t('editFormat'),
+            value: editFormat,
+            disabled: !writable || busy,
+            options: ['auto', 'multipart', 'json', 'chat', 'off'].map((value) => ({ id: value, label: value })),
+            onPick: (id) => { setEditFormat(id); setDirty(true) },
+          }),
+          React.createElement('p', { style: css.meta }, t('editFormatHint')),
           failed ? React.createElement('p', { style: css.error }, t('saveFailed')) : null,
           React.createElement('div', { style: { ...css.actions, padding: '12px 0 4px' } },
             React.createElement('button', { type: 'button', style: css.button, disabled: !dirty || busy, onClick: discard }, t('discard')),
@@ -1017,6 +1033,7 @@ window.__ModuleLoader__.load({
             modelId: value?.modelId ?? '',
             defaultSize: value?.defaultSize ?? '1024x1024',
             defaultQuality: value?.defaultQuality ?? 'auto',
+            editFormat: value?.editFormat ?? 'auto',
           })),
         }
       }
@@ -1036,7 +1053,7 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       ensureSelectCss()
-      ctx.effect(() => ctx.locale.register(LOCALE_NS, { zh, en }), 'dsh-image-generation: copy dictionaries')
+      ctx.effect(() => ctx.locale.register(LOCALE_NS, { zh, en }), 'dsh-image-generator: copy dictionaries')
       const t = ctx.locale.bind(LOCALE_NS)
       const { legacy, configForms, catalog, runtime } = bindScopes(ctx)
       const connection = ctx.get('connection')
@@ -1067,10 +1084,10 @@ window.__ModuleLoader__.load({
         ctx.effect(() => configForms.whileServed([CATALOG_NS], () =>
           ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
             name: 'plugins.bundle.config',
-            key: 'dsh-image-generation',
+            key: 'dsh-image-generator',
             locale: LOCALE_NS,
             inject: () => ({ catalog, runtime }),
-          }, RuntimeBundlePage))), 'dsh-image-generation: plugins page')
+          }, RuntimeBundlePage))), 'dsh-image-generator: plugins page')
       }
 
       if (connection?.rpc) {
