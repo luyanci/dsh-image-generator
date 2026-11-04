@@ -845,6 +845,9 @@ function createImageGenerateTool(ctx, currentCatalog, currentRuntime) {
       }
       const attachments = ctx.get('attachments')
       const references = await resolveReferenceImages(args.referenceImages, attachments, exec.signal)
+      // `editFormat: off` disables editing for every API format, including the
+      // ones whose generators carry references themselves (gemini, chat).
+      if (references !== undefined && editFormatOf(runtime) === 'off') throw editDisabledError()
       const apiKey = await resolveApiKey(ctx, provider.apiKeyEnv, exec.signal)
       const images = await GENERATORS[provider.apiFormat]({
         provider,
