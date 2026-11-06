@@ -48,7 +48,7 @@ API Key 通过凭据服务存储，环境变量名按 `IMAGE_GEN_<供应商ID大
 npm：
 
 ```sh
-dsh plugin --profile <name> add dsh-image-generator
+dsh plugin --profile <name> add @luyanci/dsh-image-generator
 ```
 
 > [!WARNING]
@@ -137,7 +137,7 @@ All four API formats (OpenAI Images, xAI Images, Gemini/Imagen, OpenAI chat-comp
 Install:
 
 ```sh
-dsh plugin --profile <name> add dsh-image-generator
+dsh plugin --profile <name> add @luyanci/dsh-image-generator
 ```
 
 `0.2.0` renames the package to `dsh-image-generator` and the client factory id with it, so upgrading from `dsh-image-generation` needs a remove first:
