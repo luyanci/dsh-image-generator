@@ -14,7 +14,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 
-export const name = 'dsh-image-generator'
+export const name = '@luyanci/dsh-image-generator'
 
 export const inject = ['tools']
 

@@ -5,4 +5,4 @@
 # in package.json.
 - insert:
     - id: image-gen
-      name: dsh-image-generator
+      name: "@luyanci/dsh-image-generator"

@@ -26,7 +26,7 @@ function stripClientSuffix(spec) {
   return spec.endsWith('/client') ? spec.slice(0, -7) : spec
 }
 
-function loadClientFactory(source, url = 'dsh-image-generation/client.js') {
+function loadClientFactory(source, url = '@luyanci/dsh-image-generation/client.js') {
   const factories = new Map()
   const context = {
     window: {

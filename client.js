@@ -6,7 +6,7 @@
  * - tool.call.toolview for image_generate: inline gallery
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-image-generator',
+  id: '@luyanci/dsh-image-generator',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
