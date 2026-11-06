@@ -1,5 +1,5 @@
 /**
- * dsh-image-generator — Host half.
+ * @luyanci/dsh-image-generator — Host half.
  *
  * Two settings namespaces:
  *   - `image-gen`          catalog of image providers + models (Settings → 生图配置)
@@ -44,7 +44,7 @@ const DEFAULT_EDIT_FORMAT = 'auto'
 const DEFAULT_ASYNC_MODE = 'auto'
 
 const IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
-const USER_AGENT = 'dsh-image-generator/0.1.1'
+const USER_AGENT = '@luyanci/dsh-image-generator/0.3.1'
 const DEFAULT_SIZE = '1024x1024'
 const DEFAULT_QUALITY = 'auto'
 

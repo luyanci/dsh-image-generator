@@ -1,5 +1,5 @@
 /**
- * dsh-image-generator — Client half.
+ * @luyanci/dsh-image-generator — Client half.
  *
  * - Settings → 生图配置: add/edit image providers and their models
  * - Settings → 插件 → 插件配置 → 图形生成: pick the single model the tool uses
@@ -29,10 +29,10 @@ window.__ModuleLoader__.load({
 
     function ensureSelectCss() {
       if (typeof document === 'undefined') return
-      if (document.querySelector('style[data-plugin-css="dsh-image-generator-select"]')) return
+      if (document.querySelector('style[data-plugin-css="@luyanci/dsh-image-generator-select"]')) return
       const tag = document.createElement('style')
-      tag.dataset.plugin = 'dsh-image-generator'
-      tag.dataset.pluginCss = 'dsh-image-generator-select'
+      tag.dataset.plugin = '@luyanci/dsh-image-generator'
+      tag.dataset.pluginCss = '@luyanci/dsh-image-generator-select'
       tag.textContent = SELECT_CSS
       document.head.appendChild(tag)
     }
@@ -1122,7 +1122,7 @@ window.__ModuleLoader__.load({
         ctx.effect(() => configForms.whileServed([CATALOG_NS], () =>
           ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
             name: 'plugins.bundle.config',
-            key: 'dsh-image-generator',
+            key: '@luyanci/dsh-image-generator',
             locale: LOCALE_NS,
             inject: () => ({ catalog, runtime }),
           }, RuntimeBundlePage))), 'dsh-image-generator: plugins page')
